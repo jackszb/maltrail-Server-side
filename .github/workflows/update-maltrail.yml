@@ -1,0 +1,71 @@
+name: Update Maltrail Ruleset
+
+on:
+  schedule:
+    # 每天国际标准时间 04:00 (北京时间 12:00) 执行
+    - cron: '0 4 * * *'
+  workflow_dispatch: # 允许手动触发
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # 必须有写权限才能推送到仓库
+
+    steps:
+      - name: Checkout codebase
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl jq
+
+      - name: Install sing-box
+        run: |
+          # 获取最新版本号
+          VERSION=$(curl -s "https://api.github.com/repos/SagerNet/sing-box/releases/latest" | jq -r .tag_name)
+          echo "Installing sing-box $VERSION"
+          # 下载并解压 (Linux amd64)
+          curl -sLo sing-box.tar.gz "https://github.com/SagerNet/sing-box/releases/download/${VERSION}/sing-box-${VERSION#v}-linux-amd64.tar.gz"
+          tar -xzf sing-box.tar.gz
+          # 移动二进制文件到 path
+          sudo mv sing-box-*/sing-box /usr/local/bin/
+          sing-box version
+
+      - name: Download, Merge and Compile Rules
+        run: |
+          mkdir -p rules
+          python3 scripts/build_maltrail.py \
+            --ip-url "https://raw.githubusercontent.com/stamparm/ipsum/refs/heads/master/levels/1.txt" \
+            --domain-url "https://raw.githubusercontent.com/stamparm/aux/master/maltrail-malware-domains.txt" \
+            --output-dir rules \
+            --output-name maltrail \
+            --sing-box-bin sing-box
+
+          echo "📂 rules 目录内容:"
+          ls -lh rules/
+
+      # 获取当前日期
+      - name: Get Current Date
+        id: info
+        run: |
+          echo "DATE=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+
+      # 直接提交并推送 rules 文件夹到当前分支
+      - name: Commit and Push rules folder
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add rules/
+          if git diff --cached --quiet; then
+            echo "没有变化，跳过提交。"
+          else
+            git commit -m "Github Action: update maltrail rules [${{ steps.info.outputs.DATE }}]"
+            git push
+          fi
