@@ -43,7 +43,7 @@ jobs:
           mkdir -p rules
           python3 scripts/build_maltrail.py \
             --ip-url "https://raw.githubusercontent.com/stamparm/ipsum/refs/heads/master/levels/1.txt" \
-            --domain-url "https://raw.githubusercontent.com/stamparm/aux/master/maltrail-malware-domains.txt" \
+            --domain-source trails \
             --output-dir rules \
             --output-name maltrail \
             --sing-box-bin sing-box
