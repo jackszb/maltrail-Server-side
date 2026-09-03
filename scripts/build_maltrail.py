@@ -32,6 +32,7 @@ import json
 import re
 import subprocess
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -65,13 +66,29 @@ def fetch_trails_domains(classes: list[str], skip_verify: bool = False) -> list[
     从 stamparm/trails 仓库最新 Release 下载 trails.csv.gz，
     （可选）校验 sha256，解析出属于指定威胁等级、且本身是纯域名格式的指标。
     """
-    csv_gz = download_bytes(TRAILS_CSV_GZ_URL)
+    try:
+        csv_gz = download_bytes(TRAILS_CSV_GZ_URL)
+    except (urllib.error.URLError, OSError) as exc:
+        print(f"❌ 下载 {TRAILS_CSV_GZ_URL} 失败: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        csv_bytes = gzip.decompress(csv_gz)
+    except (gzip.BadGzipFile, OSError) as exc:
+        print(
+            f"❌ 解压 trails.csv.gz 失败，文件可能下载不完整或已损坏: {exc}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     if not skip_verify:
         print(f"⬇️  正在下载校验文件: {TRAILS_SHA256_URL}")
-        expected_sha256 = download_bytes(TRAILS_SHA256_URL).decode().strip().split()[0]
+        try:
+            expected_sha256 = download_bytes(TRAILS_SHA256_URL).decode().strip().split()[0]
+        except (urllib.error.URLError, OSError) as exc:
+            print(f"❌ 下载 {TRAILS_SHA256_URL} 失败: {exc}", file=sys.stderr)
+            sys.exit(1)
         print("🔐 正在校验 sha256 ...")
-        csv_bytes = gzip.decompress(csv_gz)
         actual_sha256 = hashlib.sha256(csv_bytes).hexdigest()
         if actual_sha256 != expected_sha256:
             print(
@@ -80,12 +97,11 @@ def fetch_trails_domains(classes: list[str], skip_verify: bool = False) -> list[
             )
             sys.exit(1)
         print("✅ sha256 校验通过")
-    else:
-        csv_bytes = gzip.decompress(csv_gz)
 
     wanted_classes = {f"({c.strip()})" for c in classes if c.strip()}
     print(f"🔎 正在解析 trails.csv（保留等级: {', '.join(sorted(wanted_classes))}）...")
 
+    seen_raw: set[str] = set()
     domains: set[str] = set()
     total = 0
     text = csv_bytes.decode("utf-8", errors="replace")
@@ -102,9 +118,12 @@ def fetch_trails_domains(classes: list[str], skip_verify: bool = False) -> list[
             # host/path、URL、IP:port 等非纯域名指标，跳过
             continue
         if DOMAIN_RE.match(indicator):
+            seen_raw.add(indicator)
             domains.add(indicator.lower())
 
-    print(f"   共扫描 {total} 行，提取到 {len(domains)} 个唯一域名")
+    merged = len(seen_raw) - len(domains)
+    print(f"   共扫描 {total} 行，提取到 {len(domains)} 个唯一域名"
+          + (f"（其中 {merged} 条因大小写/写法差异被归一化合并）" if merged > 0 else ""))
     return sorted(domains)
 
 
